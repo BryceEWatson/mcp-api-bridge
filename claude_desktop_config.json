@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "api-bridge": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/path/to/mcp-api-bridge",
+        "api-bridge"
+      ]
+    }
+  }
+}
