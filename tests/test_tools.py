@@ -338,7 +338,7 @@ class TestToolErrorHandling:
     async def test_update_post_with_nonexistent_id_returns_error(self, httpx_mock):
         """Test that updating non-existent post returns error."""
         httpx_mock.add_response(
-            method="PUT",
+            method="PATCH",
             url="https://jsonplaceholder.typicode.com/posts/99999",
             status_code=404
         )

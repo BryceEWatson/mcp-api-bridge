@@ -11,7 +11,7 @@ import json
 
 import httpx
 from enum import Enum
-from typing import Optional, Any
+from typing import Annotated, Optional, Any
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 from mcp.server.fastmcp import FastMCP
@@ -74,17 +74,26 @@ class ListPostsInput(BaseModel):
         return v
 
 
-@mcp.tool(description="List posts from JSONPlaceholder with pagination and optional filtering.")
+@mcp.tool(
+    name="api_list_posts",
+    description="List posts from JSONPlaceholder with pagination and optional filtering.",
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True
+    }
+)
 async def api_list_posts(
-    user_id: Optional[int] = None,
-    limit: int = 20,
-    offset: int = 0,
-    response_format: ResponseFormat = ResponseFormat.MARKDOWN
+    user_id: Annotated[Optional[int], Field(None, description="Filter posts by user ID (author). If omitted, returns posts from all users.", ge=1)] = None,
+    limit: Annotated[int, Field(description="Number of posts to return. Default 20, max 100.", ge=1, le=100)] = 20,
+    offset: Annotated[int, Field(description="Number of posts to skip. Default 0. Used for pagination.", ge=0)] = 0,
+    response_format: Annotated[ResponseFormat, Field(description="Output format: 'markdown' for human-readable summaries, 'json' for full objects.")] = ResponseFormat.MARKDOWN
 ) -> str:
     """Fetch and list posts with optional filtering by author and pagination.
 
     Args:
-        user_id: (Optional) Filter posts by user ID. If omitted, all posts shown.
+        user_id: Filter posts by user ID. If omitted, all posts shown.
         limit: Number of posts per page (1-100, default 20).
         offset: Number of posts to skip (default 0).
         response_format: 'markdown' for summaries, 'json' for full objects.
@@ -97,7 +106,7 @@ async def api_list_posts(
         >>> await api_list_posts()
 
         List 50 posts from user 2 as JSON:
-        >>> await api_list_posts(user_id=2, limit=50, response_format="json")
+        >>> await api_list_posts(user_id=2, limit=50, response_format=ResponseFormat.JSON)
 
         Get posts 20-40 (pagination):
         >>> await api_list_posts(limit=20, offset=20)
@@ -207,11 +216,20 @@ class GetPostInput(BaseModel):
     )
 
 
-@mcp.tool(description="Fetch a single post by ID with optional comments.")
+@mcp.tool(
+    name="api_get_post",
+    description="Fetch a single post by ID with optional comments.",
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True
+    }
+)
 async def api_get_post(
-    post_id: int,
-    include_comments: bool = False,
-    response_format: ResponseFormat = ResponseFormat.MARKDOWN
+    post_id: Annotated[int, Field(description="ID of the post to fetch. Must be >= 1.", ge=1)],
+    include_comments: Annotated[bool, Field(description="If true, also fetch comments on this post.")] = False,
+    response_format: Annotated[ResponseFormat, Field(description="Output format: 'markdown' for formatted display, 'json' for raw objects.")] = ResponseFormat.MARKDOWN
 ) -> str:
     """Fetch a single post by ID and optionally its comments.
 
@@ -230,7 +248,7 @@ async def api_get_post(
         >>> await api_get_post(post_id=1)
 
         Fetch post 5 with comments as JSON:
-        >>> await api_get_post(post_id=5, include_comments=True, response_format="json")
+        >>> await api_get_post(post_id=5, include_comments=True, response_format=ResponseFormat.JSON)
 
     Error Handling:
         - Post not found (404): Returns "Resource not found" message
@@ -335,11 +353,20 @@ class CreatePostInput(BaseModel):
         return v
 
 
-@mcp.tool(description="Create a new post.")
+@mcp.tool(
+    name="api_create_post",
+    description="Create a new post.",
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True
+    }
+)
 async def api_create_post(
-    title: str,
-    body: str,
-    user_id: int
+    title: Annotated[str, Field(description="Post title (1-200 characters).", min_length=1, max_length=200)],
+    body: Annotated[str, Field(description="Post body content (1-5000 characters).", min_length=1, max_length=5000)],
+    user_id: Annotated[int, Field(description="ID of the user creating the post. Must be >= 1.", ge=1)]
 ) -> str:
     """Create a new post on JSONPlaceholder.
 
@@ -446,12 +473,21 @@ class UpdatePostInput(BaseModel):
         return self
 
 
-@mcp.tool(description="Update a post (partial update with PUT).")
+@mcp.tool(
+    name="api_update_post",
+    description="Update a post (partial update with PATCH).",
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True
+    }
+)
 async def api_update_post(
-    post_id: int,
-    title: Optional[str] = None,
-    body: Optional[str] = None,
-    user_id: Optional[int] = None
+    post_id: Annotated[int, Field(description="ID of the post to update. Must be >= 1.", ge=1)],
+    title: Annotated[Optional[str], Field(description="New title (1-200 characters). Omit to keep current.", min_length=1, max_length=200)] = None,
+    body: Annotated[Optional[str], Field(description="New body (1-5000 characters). Omit to keep current.", min_length=1, max_length=5000)] = None,
+    user_id: Annotated[Optional[int], Field(description="New user ID. Omit to keep current.", ge=1)] = None
 ) -> str:
     """Update a post with partial fields.
 
@@ -486,6 +522,10 @@ async def api_update_post(
         - Post not found (404): Returns "Resource not found" message
         - Network error: Returns actionable error message
     """
+    # Validate that at least one field is provided
+    if title is None and body is None and user_id is None:
+        return "Error: At least one of title, body, or user_id must be provided."
+
     try:
         async with APIClient() as client:
             # Build payload with only provided fields
@@ -497,7 +537,7 @@ async def api_update_post(
             if user_id is not None:
                 payload["userId"] = user_id
 
-            result = await client.put(f"/posts/{post_id}", json=payload)
+            result = await client.patch(f"/posts/{post_id}", json=payload)
 
             return json.dumps({
                 "success": True,

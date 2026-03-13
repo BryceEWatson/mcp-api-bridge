@@ -63,8 +63,8 @@ A minimal-but-polished MCP server that wraps a REST API and exposes it as MCP to
 |------|-----------|-------------|---------------|
 | `api_list_posts` | GET /posts with filtering + pagination | readOnly, idempotent | Pagination, query params, response formatting |
 | `api_get_post` | GET /posts/{id} + nested /comments | readOnly, idempotent | Resource lookup, related data joining |
-| `api_create_post` | POST /posts | destructive, NOT idempotent | Write operations, input validation |
-| `api_update_post` | PUT /posts/{id} | NOT destructive, idempotent | Partial updates, existence checks |
+| `api_create_post` | POST /posts | NOT readOnly, NOT idempotent | Write operations, input validation |
+| `api_update_post` | PATCH /posts/{id} | NOT destructive, idempotent | Partial updates, existence checks |
 
 **Why these 4:** They cover the four operations every REST API has (list, get, create, update). Delete is omitted intentionally — it's trivial to add but would be a 5th tool that adds length without teaching a new pattern. The README will note this as a deliberate scope decision and show how to add it.
 
@@ -88,7 +88,7 @@ A minimal-but-polished MCP server that wraps a REST API and exposes it as MCP to
 **`api_update_post`**
 - Params: `post_id` (required), `title` (optional), `body` (optional), `user_id` (optional)
 - At least one field must be provided (custom validator)
-- Shows partial update pattern (PUT with merge)
+- Shows partial update pattern (PATCH)
 
 ### Project Structure
 
@@ -117,7 +117,7 @@ portfolio/mcp-api-bridge/
 ### Key Architectural Patterns to Demonstrate
 
 1. **Centralized API client** — single `httpx.AsyncClient` with timeout, base URL, headers. Buyers swap this one file to point at their API.
-2. **Pydantic input models** — every tool gets a typed, validated input model. Shows the quality bar.
+2. **Annotated params with Pydantic Field** — every tool parameter uses `Annotated[type, Field(...)]` for flat schemas with constraints and descriptions. Shows the quality bar.
 3. **Dual response format** — markdown for human readability, JSON for programmatic use. MCP best practice.
 4. **Consistent error handling** — `_handle_api_error()` utility that maps HTTP status codes to actionable messages.
 5. **Tool annotations** — every tool has `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` set correctly.
@@ -162,7 +162,8 @@ One-line: Turn any REST API into an MCP server for Claude, Cursor, and other AI 
 | Tool output format | ~4 | Markdown vs JSON format, pagination metadata |
 | Error handling | ~4 | 404, 429, timeout, network error |
 | API client | ~3 | Base URL construction, headers, timeout config |
-| **Total** | **~17** | |
+| PATCH client | ~2 | PATCH method, payload verification |
+| **Total** | **~19 (actual: 46)** | |
 
 Use `pytest-httpx` for clean async mock responses. No real network calls.
 

@@ -139,4 +139,21 @@ class APIClient:
         response.raise_for_status()
         return response.json()
 
+    async def patch(self, endpoint: str, json: dict) -> dict:
+        """Make a PATCH request.
+
+        Args:
+            endpoint: API endpoint
+            json: Request body as dict
+
+        Returns:
+            Parsed JSON response
+
+        Raises:
+            httpx.HTTPStatusError: If the request fails
+        """
+        response = await self.client.patch(endpoint, json=json)
+        response.raise_for_status()
+        return response.json()
+
 

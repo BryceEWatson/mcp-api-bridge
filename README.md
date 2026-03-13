@@ -6,6 +6,10 @@ This is a production-quality starter kit that wraps [JSONPlaceholder](https://js
 
 ---
 
+<p align="center">
+  <img src="docs/demo.svg" alt="Demo: Claude Desktop using MCP API Bridge tools" width="800">
+</p>
+
 ## What This Does
 
 You give Claude (or any MCP-compatible AI assistant) access to a REST API through typed, validated tools:
@@ -65,9 +69,9 @@ Restart Claude Desktop. The 4 tools appear automatically.
 | `api_list_posts` | GET /posts | List posts with filtering + pagination | Query params, in-memory pagination, dual format output |
 | `api_get_post` | GET /posts/{id} | Fetch a post with optional comments | Resource lookup, related data joining |
 | `api_create_post` | POST /posts | Create a new post | Write operations, input validation |
-| `api_update_post` | PUT /posts/{id} | Update post fields | Partial updates, existence checks |
+| `api_update_post` | PATCH /posts/{id} | Update post fields | Partial updates, existence checks |
 
-Every tool supports `response_format: "markdown"` (human-readable) or `"json"` (machine-readable). All inputs are validated with Pydantic v2 models with field constraints.
+Every tool supports `response_format: "markdown"` (human-readable) or `"json"` (machine-readable). All inputs are validated with Pydantic v2 models with field constraints. Every tool has MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) set correctly.
 
 ## Adapting This For Your API
 
@@ -85,7 +89,7 @@ class APIClient:
         self.headers = {"Authorization": f"Bearer {os.environ['YOUR_API_KEY']}"}
 ```
 
-The rest of the client (get/post/put, error handling) works unchanged.
+The rest of the client (get/post/put/patch, error handling) works unchanged.
 
 ### Step 2: Define your Pydantic input models
 
@@ -102,19 +106,23 @@ class SearchOrdersInput(BaseModel):
 
 ### Step 3: Register your tools
 
-Same `@mcp.tool` decorator pattern — just change the endpoint and formatting:
+Same `@mcp.tool` decorator pattern — pass a Pydantic model as the single parameter:
 
 ```python
-@mcp.tool(description="Search orders by customer and status.")
-async def orders_search(customer_id: Optional[str] = None, status: Optional[str] = None, limit: int = 20) -> str:
+@mcp.tool(
+    name="orders_search",
+    description="Search orders by customer and status.",
+    annotations={"readOnlyHint": True, "idempotentHint": True}
+)
+async def orders_search(params: SearchOrdersInput) -> str:
     async with APIClient() as client:
-        params = {}
-        if customer_id:
-            params["customer_id"] = customer_id
-        if status:
-            params["status"] = status
-        orders = await client.get("/orders", params=params)
-        return format_orders(orders[:limit])
+        query = {}
+        if params.customer_id:
+            query["customer_id"] = params.customer_id
+        if params.status:
+            query["status"] = params.status
+        orders = await client.get("/orders", params=query)
+        return format_orders(orders[:params.limit])
 ```
 
 ### Step 4: Update the Claude Desktop config
@@ -136,8 +144,8 @@ mcp-api-bridge/
 │       └── server.py                  ← MCP tools (4 tools, ~530 lines)
 └── tests/
     ├── conftest.py                    ← Shared fixtures and mock data
-    ├── test_client.py                 ← API client tests (13 tests)
-    └── test_tools.py                  ← Tool tests (31 tests)
+    ├── test_client.py                 ← API client tests (14 tests)
+    └── test_tools.py                  ← Tool tests (32 tests)
 ```
 
 The architecture separates the **API layer** (api_client.py) from the **MCP layer** (server.py). When adapting for a new API, you primarily modify api_client.py and the Pydantic models — the MCP wiring stays the same.
@@ -169,7 +177,7 @@ pytest tests/test_client.py -v
 pytest tests/test_tools.py -v
 ```
 
-All tests use `pytest-httpx` to mock HTTP responses — no real API calls, fast and deterministic. 44 tests covering input validation, output formatting, pagination, and error handling.
+All tests use `pytest-httpx` to mock HTTP responses — no real API calls, fast and deterministic. 46 tests covering input validation, output formatting, pagination, and error handling.
 
 ## Built With
 

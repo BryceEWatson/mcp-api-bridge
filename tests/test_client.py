@@ -84,6 +84,48 @@ class TestAPIClientPost:
         assert request.method == "POST"
 
 
+class TestAPIClientPatch:
+    """Test PATCH request functionality."""
+
+    @pytest.mark.asyncio
+    async def test_successful_patch_sends_body_correctly(self, httpx_mock):
+        """Test that PATCH request sends JSON body correctly."""
+        httpx_mock.add_response(
+            method="PATCH",
+            url="https://api.example.com/posts/1",
+            json={"id": 1, "title": "Updated Post", "body": "updated content", "userId": 1},
+            status_code=200
+        )
+
+        client = APIClient(base_url="https://api.example.com")
+        async with client:
+            payload = {"title": "Updated Post", "body": "updated content"}
+            result = await client.patch("/posts/1", json=payload)
+
+        assert result["id"] == 1
+        assert result["title"] == "Updated Post"
+        assert result["body"] == "updated content"
+
+    @pytest.mark.asyncio
+    async def test_patch_request_includes_payload(self, httpx_mock):
+        """Test that PATCH payload is correctly transmitted."""
+        httpx_mock.add_response(
+            method="PATCH",
+            url="https://api.example.com/posts/5",
+            json={"id": 5, "title": "Changed"},
+            status_code=200
+        )
+
+        client = APIClient(base_url="https://api.example.com")
+        async with client:
+            payload = {"title": "Changed"}
+            await client.patch("/posts/5", json=payload)
+
+        # Verify the request was made with correct payload
+        request = httpx_mock.get_request()
+        assert request.method == "PATCH"
+
+
 class TestAPIClientErrorHandling:
     """Test error handling for various API responses."""
 

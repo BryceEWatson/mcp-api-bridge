@@ -127,7 +127,7 @@ async def mock_api_client(httpx_mock):
         status_code=201
     )
 
-    # Mock for PUT update
+    # Mock for PUT update (kept for backward compatibility)
     httpx_mock.add_response(
         method="PUT",
         url="https://jsonplaceholder.typicode.com/posts/1",
@@ -137,6 +137,25 @@ async def mock_api_client(httpx_mock):
             "title": "Updated Post",
             "body": "Updated post body"
         }
+    )
+
+    # Mock for PATCH update
+    httpx_mock.add_response(
+        method="PATCH",
+        url="https://jsonplaceholder.typicode.com/posts/1",
+        json={
+            "userId": 1,
+            "id": 1,
+            "title": "Updated Post",
+            "body": "Updated post body"
+        }
+    )
+
+    # Mock for PATCH update on non-existent post
+    httpx_mock.add_response(
+        method="PATCH",
+        url="https://jsonplaceholder.typicode.com/posts/99999",
+        status_code=404
     )
 
     # Create and return client
