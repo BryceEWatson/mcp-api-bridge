@@ -15,6 +15,7 @@ from typing import Annotated, Optional, Any
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
 from .api_client import APIClient, handle_api_error
 
@@ -524,7 +525,7 @@ async def api_update_post(
     """
     # Validate that at least one field is provided
     if title is None and body is None and user_id is None:
-        return "Error: At least one of title, body, or user_id must be provided."
+        raise ToolError("At least one of title, body, or user_id must be provided.")
 
     try:
         async with APIClient() as client:

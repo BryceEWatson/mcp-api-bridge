@@ -145,7 +145,8 @@ mcp-api-bridge/
 └── tests/
     ├── conftest.py                    ← Shared fixtures and mock data
     ├── test_client.py                 ← API client tests (14 tests)
-    └── test_tools.py                  ← Tool tests (32 tests)
+    ├── test_tools.py                  ← Tool tests (32 tests)
+    └── test_e2e_mcp.py               ← End-to-end MCP protocol tests (28 tests)
 ```
 
 The architecture separates the **API layer** (api_client.py) from the **MCP layer** (server.py). When adapting for a new API, you primarily modify api_client.py and the Pydantic models — the MCP wiring stays the same.
@@ -175,9 +176,12 @@ pytest tests/test_client.py -v
 
 # Just the tool tests
 pytest tests/test_tools.py -v
+
+# End-to-end MCP protocol tests (hits live JSONPlaceholder API)
+pytest tests/test_e2e_mcp.py -v
 ```
 
-All tests use `pytest-httpx` to mock HTTP responses — no real API calls, fast and deterministic. 46 tests covering input validation, output formatting, pagination, and error handling.
+74 tests covering input validation, output formatting, pagination, error handling, and end-to-end MCP protocol tests against the live API. Unit and tool tests use `pytest-httpx` to mock HTTP responses (fast and deterministic). E2e tests exercise tool discovery, schema constraints, annotations, and real API calls over the MCP protocol — including 2 stdio transport tests using the same transport Claude Desktop uses.
 
 ## Built With
 
