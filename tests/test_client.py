@@ -1,9 +1,11 @@
 """Tests for the APIClient HTTP layer."""
 
-import pytest
 import httpx
+import pytest
+
 from api_bridge_mcp.api_client import APIClient, handle_api_error
-from .conftest import SAMPLE_POST, SAMPLE_POSTS
+
+from .conftest import SAMPLE_POSTS
 
 
 class TestAPIClientGet:
@@ -176,6 +178,16 @@ class TestAPIClientErrorHandling:
 
         message = handle_api_error(error)
         assert "Unexpected error" in message
+        assert "Something went wrong" not in message
+
+    @pytest.mark.asyncio
+    async def test_other_request_error_does_not_echo_exception_text(self):
+        """Other network errors report the type, not the raw exception text."""
+        error = httpx.RemoteProtocolError("proxy at 10.0.0.5 said no")
+
+        message = handle_api_error(error)
+        assert "RemoteProtocolError" in message
+        assert "10.0.0.5" not in message
 
 
 class TestHandleAPIError:

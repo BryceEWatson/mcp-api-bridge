@@ -1,53 +1,54 @@
-# REST API → MCP Server Bridge
+# REST API to MCP Server Bridge
 
-Turn any REST API into an MCP server so Claude, Cursor, and other AI assistants can use it directly.
+[![CI](https://github.com/BryceEWatson/mcp-api-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/BryceEWatson/mcp-api-bridge/actions/workflows/ci.yml)
 
-This is a production-quality starter kit that wraps [JSONPlaceholder](https://jsonplaceholder.typicode.com) (a free REST API) as 4 MCP tools. The real value is the **pattern** — swap the API client to point at your own API and you have a working MCP server.
+A small Python example of wrapping a REST API as MCP tools, so Claude, Cursor and other MCP clients can call it with validated input. MCP (Model Context Protocol) is the standard those assistants use to discover and call external tools.
+
+I built it around [JSONPlaceholder](https://jsonplaceholder.typicode.com), a free fake REST API, and exposed four tools: list, get, create and update posts. The point is the pattern. Swap the API client for your own and the tool wiring, validation and error handling carry over.
 
 ---
 
 <p align="center">
-  <img src="docs/demo.svg" alt="Demo: Claude Desktop using MCP API Bridge tools" width="800">
+  <img src="docs/demo.svg" alt="Illustration of a Claude Desktop session calling the api_list_posts and api_get_post tools" width="800">
 </p>
 
-## What This Does
+## What it does
 
-You give Claude (or any MCP-compatible AI assistant) access to a REST API through typed, validated tools:
+An MCP client gets typed tools with JSON schemas it can read before calling them:
 
 ```
-You: "List the 5 most recent posts by user 3"
+You: "List the first 5 posts by user 3"
 
 Claude calls: api_list_posts(user_id=3, limit=5)
-→ Fetches GET /posts?userId=3
-→ Returns formatted, paginated results
+→ Fetches GET /posts and filters to userId 3
+→ Returns a page of results with pagination info
 
 You: "Create a post about MCP servers"
 
 Claude calls: api_create_post(title="Why MCP Servers Matter", body="...", user_id=1)
-→ Sends POST /posts with validated payload
+→ Sends POST /posts with the validated payload
 → Returns the created resource
 ```
 
-No prompt engineering needed. The AI assistant discovers the tools, validates inputs via Pydantic schemas, and gets structured responses.
+Bad input (a limit of 0, an empty title, an update with no fields) is rejected before any HTTP request goes out, and the client gets an MCP error result (`isError: true`) it can act on.
 
-## Quick Start
+## Quick start
 
-**Prerequisites:** Python 3.10+, [uv](https://docs.astral.sh/uv/) (recommended) or pip
+**Prerequisites:** Python 3.10 or newer and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-# Clone and install
 git clone https://github.com/BryceEWatson/mcp-api-bridge.git
 cd mcp-api-bridge
-uv pip install -e ".[dev]"
+uv sync --extra dev
 
-# Run the server (stdio transport)
-python -m api_bridge_mcp.server
+# Run the offline tests (HTTP is mocked)
+uv run pytest -m "not live"
 
-# Or run tests
-pytest tests/ -v
+# Run the server over stdio
+uv run api-bridge
 ```
 
-**Add to Claude Desktop** — copy this into your `claude_desktop_config.json`:
+The server speaks MCP over stdin and stdout, so running it by hand just waits for a client. To try it in Claude Desktop, add this to your `claude_desktop_config.json` and restart Claude Desktop:
 
 ```json
 {
@@ -60,22 +61,44 @@ pytest tests/ -v
 }
 ```
 
-Restart Claude Desktop. The 4 tools appear automatically.
+If Claude Desktop can't find `uv`, use its full path (`which uv` on macOS and Linux, `where uv` on Windows), since desktop apps don't always see your shell's PATH. On Windows, write the `--directory` path with forward slashes.
 
-## The Tools
+If you'd rather use pip, `python -m venv .venv`, activate it, then `pip install -e ".[dev]"`. `uv.lock` pins the exact versions CI tests against.
 
-| Tool | Method | What It Does | Key Patterns |
-|------|--------|-------------|--------------|
-| `api_list_posts` | GET /posts | List posts with filtering + pagination | Query params, in-memory pagination, dual format output |
-| `api_get_post` | GET /posts/{id} | Fetch a post with optional comments | Resource lookup, related data joining |
-| `api_create_post` | POST /posts | Create a new post | Write operations, input validation |
-| `api_update_post` | PATCH /posts/{id} | Update post fields | Partial updates, existence checks |
+## The tools
 
-Every tool supports `response_format: "markdown"` (human-readable) or `"json"` (machine-readable). All inputs are validated with Pydantic v2 models with field constraints. Every tool has MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) set correctly.
+| Tool | Method | What it does | Annotations |
+|------|--------|--------------|-------------|
+| `api_list_posts` | GET /posts | List posts, filter by user, paginate | read-only, idempotent |
+| `api_get_post` | GET /posts/{id} | Fetch one post, optionally with its comments | read-only, idempotent |
+| `api_create_post` | POST /posts | Create a post | writes, not idempotent, not destructive (only adds) |
+| `api_update_post` | PATCH /posts/{id} | Change some fields of a post | writes, idempotent, destructive (overwrites fields) |
 
-## Adapting This For Your API
+All four set `openWorldHint` because they call an outside service. The list and get tools take `response_format`: `"markdown"` for something a person reads, `"json"` for something a program parses.
 
-The whole point of this project is to show a repeatable pattern. Here's how to make it work with any REST API:
+Annotations are hints a client can use to decide when to ask the user before a call. The MCP spec tells clients to treat them as untrusted unless the server is trusted, so they don't replace a client's own confirmation rules. JSONPlaceholder fakes its writes, so nothing actually changes on the demo API.
+
+## Security notes
+
+I wrote these down because they're the questions I'd ask of any MCP server before connecting it to an assistant.
+
+**What the server does:**
+
+- **No server-side request forgery from tool input.** The base URL is set in code by whoever runs the server. Tools only build paths from integer IDs that the schema has already checked (`post_id >= 1`), so a model can't make the server call another host or path. httpx doesn't follow redirects by default and the client keeps it that way.
+- **Input is validated at the protocol boundary.** Every parameter has a type and bounds in the JSON schema, and FastMCP enforces it before the tool runs. Titles and bodies are stripped, so whitespace-only strings are rejected. Tests check that rejected calls send no HTTP request at all.
+- **Errors are real MCP errors.** API failures raise `ToolError`, so the client sees `isError: true` instead of an error string dressed up as a success. HTTP and network errors get a short actionable message. Anything unexpected is logged to stderr and reported as a generic error, so stack traces and response bodies don't end up in the model's context.
+- **Timeouts.** Connect, read, write and pool each time out after 30 seconds by default. There's no overall deadline per request, so a server that keeps trickling bytes can hold a call open.
+- **No credentials.** JSONPlaceholder needs none, so there are no secrets in the repo. If you add a key, read it from the environment as in Step 1 below.
+
+**What it doesn't handle (out of scope for this example):**
+
+- **Prompt injection through tool output.** Post titles, bodies and comments go back to the model as-is. With a real API, that text may be written by someone other than your user, and the model can read instructions in it. The server doesn't sanitize or label it as untrusted, and the client has to treat tool output as data.
+- **Response size.** `api_list_posts` loads the whole `/posts` response into memory before paging it, because JSONPlaceholder has no server-side paging. There's no cap on response size. Against a real API, page on the server and cap what you read.
+- **Personal data passthrough.** `api_get_post` with comments returns commenter emails. A real integration should decide which fields the model needs to see.
+- **Rate limiting and retries.** A 429 is reported to the client and not retried.
+- **Authentication and authorization.** stdio runs as a local process for one user. If you switch to the HTTP transport, you need authentication in front of it.
+
+## Adapting it for your API
 
 ### Step 1: Replace the API client
 
@@ -89,110 +112,97 @@ class APIClient:
         self.headers = {"Authorization": f"Bearer {os.environ['YOUR_API_KEY']}"}
 ```
 
-The rest of the client (get/post/put/patch, error handling) works unchanged.
+Pass `headers=self.headers` when the client creates its `httpx.AsyncClient`. The get, post, put and patch helpers stay the same. Keep the base URL under the operator's control rather than taking it from tool input, or you've built a request-forgery tool.
 
-### Step 2: Define your Pydantic input models
+### Step 2: Register your tools
 
-Replace the post-related models in `server.py` with your domain:
-
-```python
-class SearchOrdersInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-
-    customer_id: Optional[str] = Field(None, description="Filter by customer")
-    status: Optional[str] = Field(None, description="Filter by status: pending, shipped, delivered")
-    limit: int = Field(20, ge=1, le=100, description="Results per page")
-```
-
-### Step 3: Register your tools
-
-Same `@mcp.tool` decorator pattern — pass a Pydantic model as the single parameter:
+Each tool is an async function. Its parameters use `Annotated[type, Field(...)]`, and FastMCP turns those into the JSON schema the client sees and enforces it before your code runs:
 
 ```python
 @mcp.tool(
     name="orders_search",
     description="Search orders by customer and status.",
-    annotations={"readOnlyHint": True, "idempotentHint": True}
+    annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
 )
-async def orders_search(params: SearchOrdersInput) -> str:
-    async with APIClient() as client:
-        query = {}
-        if params.customer_id:
-            query["customer_id"] = params.customer_id
-        if params.status:
-            query["status"] = params.status
-        orders = await client.get("/orders", params=query)
-        return format_orders(orders[:params.limit])
+async def orders_search(
+    customer_id: Annotated[Optional[str], Field(description="Filter by customer", max_length=64)] = None,
+    status: Annotated[Optional[Literal["pending", "shipped", "delivered"]], Field(description="Filter by status")] = None,
+    limit: Annotated[int, Field(description="Results per page", ge=1, le=100)] = 20,
+) -> str:
+    query = {k: v for k, v in {"customer_id": customer_id, "status": status}.items() if v is not None}
+    try:
+        async with APIClient() as client:
+            orders = await client.get("/orders", params=query)
+            return format_orders(orders[:limit])
+    except Exception as e:
+        _raise_tool_error("searching orders", e)
 ```
 
-### Step 4: Update the Claude Desktop config
+`_raise_tool_error` passes a `ToolError` you raise yourself through unchanged, turns HTTP errors into short messages, and reports anything else generically.
 
-Point the config at your new server. That's it.
+Set the annotations to match what the tool really does. A tool that overwrites or deletes data should say `destructiveHint: True`.
 
-## Project Structure
+### Step 3: Update the Claude Desktop config
+
+Point the config at your server and restart the client.
+
+## Project structure
 
 ```
 mcp-api-bridge/
-├── README.md                          ← You are here
-├── PLAN.md                            ← Design decisions and research
-├── pyproject.toml                     ← PEP 621 packaging
-├── claude_desktop_config.json         ← Example Claude Desktop config
-├── src/
-│   └── api_bridge_mcp/
-│       ├── __init__.py
-│       ├── api_client.py              ← HTTP client (swap this for your API)
-│       └── server.py                  ← MCP tools (4 tools, ~530 lines)
+├── .github/workflows/ci.yml       ← lint and tests on every push and pull request
+├── pyproject.toml                 ← packaging, dependency ranges, pytest and ruff config
+├── uv.lock                        ← exact versions CI installs
+├── claude_desktop_config.json     ← example Claude Desktop config
+├── src/api_bridge_mcp/
+│   ├── api_client.py              ← HTTP client (swap this for your API)
+│   └── server.py                  ← the four MCP tools
 └── tests/
-    ├── conftest.py                    ← Shared fixtures and mock data
-    ├── test_client.py                 ← API client tests (14 tests)
-    └── test_tools.py                  ← Tool tests (32 tests)
+    ├── conftest.py                ← shared fixtures and sample data
+    ├── test_client.py             ← API client tests (HTTP mocked)
+    ├── test_tools.py              ← tool and validation tests (HTTP mocked)
+    └── test_e2e_mcp.py            ← MCP protocol tests, some live
 ```
 
-The architecture separates the **API layer** (api_client.py) from the **MCP layer** (server.py). When adapting for a new API, you primarily modify api_client.py and the Pydantic models — the MCP wiring stays the same.
+The API layer (`api_client.py`) is separate from the MCP layer (`server.py`). To adapt it, you mostly change the client and the tool functions; the FastMCP wiring stays the same.
 
-## Design Decisions
+## Design decisions
 
-These are documented in detail in [PLAN.md](./PLAN.md). The short version:
+**JSONPlaceholder as the demo API.** No auth, no signup, full CRUD, and it's obviously a stand-in, so the pattern is the focus.
 
-**JSONPlaceholder as the demo API** — zero friction (no auth, no signup, no rate limits), full CRUD, and obviously a stand-in so the pattern is the focus, not the domain.
+**Python and FastMCP.** FastMCP is the high-level server in the official MCP Python SDK. It handles tool registration, schema generation and transport. I've pinned the SDK below 2.0, because 2.x renamed FastMCP to `MCPServer`; moving to it is a separate change.
 
-**Python + FastMCP** — the MCP Python SDK's high-level framework. Handles tool registration, input schema generation, and transport automatically. Fewer lines, fewer bugs.
+**stdio transport.** It's the default for local MCP servers. The SDK also supports streamable HTTP for remote use, which needs the authentication noted above.
 
-**stdio transport** — the right default for local-first MCP servers. Add `mcp.run(transport="streamable_http", port=8000)` for remote deployment.
+**Pydantic constraints on every parameter.** The client sees the bounds in the schema before it calls, and the server enforces the same bounds.
 
-**Pydantic v2 for validation** — every tool input is a typed model with constraints. The AI assistant sees the schema and knows exactly what to send.
+**Two response formats.** Markdown for a person reading the assistant's answer, JSON for a program.
 
-**Dual response formats** — markdown for when a human is reading Claude's output, JSON for when another system is consuming it.
-
-## Running Tests
+## Running tests
 
 ```bash
-# All tests
-pytest tests/ -v
+# Offline: client, tool, validation, schema and annotation tests. HTTP is mocked.
+uv run pytest -m "not live"
 
-# Just the API client tests
-pytest tests/test_client.py -v
+# Live: real calls to JSONPlaceholder, including a full session over stdio
+uv run pytest -m live
 
-# Just the tool tests
-pytest tests/test_tools.py -v
+# Lint
+uv run ruff check src tests
 ```
 
-The unit and tool tests use `pytest-httpx` to mock HTTP responses — fast and deterministic. The end-to-end tests hit the live JSONPlaceholder API over the real MCP protocol. 74 tests covering input validation, output formatting, pagination, error handling, and full MCP protocol flows.
+[CI](.github/workflows/ci.yml) runs lint and the offline tests on Python 3.10 through 3.13 on Linux, the offline tests on Windows and macOS, the offline tests again with the oldest dependency versions `pyproject.toml` allows, and the live tests once against JSONPlaceholder. The live job depends on that public service being up.
 
-## Built With
+## Built with
 
-- [FastMCP](https://github.com/modelcontextprotocol/python-sdk) — MCP Python SDK
-- [httpx](https://www.python-httpx.org/) — async HTTP client
-- [Pydantic v2](https://docs.pydantic.dev/) — input validation
-- [JSONPlaceholder](https://jsonplaceholder.typicode.com) — demo REST API
-- [pytest](https://docs.pytest.org/) + [pytest-httpx](https://github.com/Colin-b/pytest_httpx) — testing
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) (FastMCP)
+- [httpx](https://www.python-httpx.org/) for async HTTP
+- [Pydantic v2](https://docs.pydantic.dev/) for validation
+- [JSONPlaceholder](https://jsonplaceholder.typicode.com) as the demo API
+- [pytest](https://docs.pytest.org/), [pytest-httpx](https://github.com/Colin-b/pytest_httpx) and [ruff](https://docs.astral.sh/ruff/)
 
 ## About
 
-Built by **Bryce Watson** — senior engineer (10+ years, ex-eBay) specializing in AI engineering, MCP servers, and production AI systems. Contributor to Anthropic's Python SDK.
+I'm Bryce Watson. I build AI tooling and MCP servers. More at [brycewatson.com](https://brycewatson.com) and [github.com/BryceEWatson](https://github.com/BryceEWatson).
 
-- **Upwork:** [upwork.com/freelancers/brycewatson](https://www.upwork.com/freelancers/brycewatson)
-- **Site:** [brycewatson.com](https://brycewatson.com)
-- **GitHub:** [github.com/BryceEWatson](https://github.com/BryceEWatson)
-
-Need an MCP server built for your API? [Get in touch.](https://www.upwork.com/freelancers/brycewatson)
+MIT licensed.

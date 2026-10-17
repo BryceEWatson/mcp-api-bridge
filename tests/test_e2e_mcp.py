@@ -1,7 +1,9 @@
 """End-to-end MCP protocol tests.
 
 These tests connect to the server using the same MCP protocol that Claude Desktop
-uses. No HTTP mocking — every tool call hits the live JSONPlaceholder API.
+uses. There is no HTTP mocking. Classes marked ``live`` call the real
+JSONPlaceholder API; the rest (schemas, annotations, input validation) never
+reach the network. Run only the offline ones with ``pytest -m "not live"``.
 
 Two transport modes are tested:
   1. In-memory: Fast, uses the SDK's built-in memory transport. Tests the full
@@ -20,7 +22,6 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from api_bridge_mcp.server import mcp as server_instance
-
 
 # ============================================================================
 # In-Memory Transport Tests (full MCP protocol, no subprocess)
@@ -146,6 +147,8 @@ class TestToolAnnotations:
             tool = next(t for t in result.tools if t.name == "api_create_post")
             assert tool.annotations is not None
             assert tool.annotations.readOnlyHint is False
+            assert tool.annotations.destructiveHint is False  # only adds data
+            assert tool.annotations.idempotentHint is False  # each call creates a post
 
     @pytest.mark.asyncio
     async def test_update_post_is_not_readonly(self):
@@ -154,11 +157,14 @@ class TestToolAnnotations:
             tool = next(t for t in result.tools if t.name == "api_update_post")
             assert tool.annotations is not None
             assert tool.annotations.readOnlyHint is False
+            assert tool.annotations.destructiveHint is True  # overwrites existing fields
+            assert tool.annotations.idempotentHint is True  # same PATCH, same result
 
 
+@pytest.mark.live
 class TestLiveToolCalls:
     """Call each tool over MCP against the live JSONPlaceholder API.
-    No mocks — real HTTP requests."""
+    No mocks: real HTTP requests."""
 
     @pytest.mark.asyncio
     async def test_list_posts_returns_markdown(self):
@@ -342,6 +348,7 @@ class TestInputValidation:
             )
 
 
+@pytest.mark.live
 class TestErrorHandling:
     """Verify errors from the live API are handled gracefully."""
 
@@ -352,9 +359,8 @@ class TestErrorHandling:
                 "api_get_post",
                 {"post_id": 99999},
             )
-            # Should return an error message, not crash
-            text = result.content[0].text
-            assert "error" in text.lower() or "404" in text or "not found" in text.lower()
+            assert result.isError, "a 404 must come back as an MCP error"
+            assert "not found" in result.content[0].text.lower()
 
 
 # ============================================================================
@@ -362,8 +368,9 @@ class TestErrorHandling:
 # ============================================================================
 
 
+@pytest.mark.live
 class TestStdioTransport:
-    """Spawn the server as a subprocess over stdio — the exact same transport
+    """Spawn the server as a subprocess over stdio, the same transport
     Claude Desktop uses. This is the most realistic integration test possible
     without actually using Claude Desktop."""
 

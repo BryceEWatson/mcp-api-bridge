@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="A small Python example of wrapping a REST API as MCP tools with validated input, real MCP errors and CI.">
     <title>REST API → MCP Server Bridge</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -537,7 +538,7 @@
     <!-- Hero -->
     <section class="hero">
         <h1>REST API → MCP Server Bridge</h1>
-        <p>Turn any REST API into an MCP server for Claude, Cursor, and other AI assistants.</p>
+        <p>A small Python example of wrapping a REST API as MCP tools that Claude, Cursor and other MCP clients can call with validated input.</p>
         <div class="button-group">
             <a href="https://github.com/BryceEWatson/mcp-api-bridge" class="btn btn-primary">
                 ⭐ View on GitHub
@@ -578,7 +579,7 @@
     <section class="tools-section" id="tools">
         <h2 class="section-title">The Tools</h2>
         <p style="text-align: center; color: var(--text-secondary); margin-bottom: 2rem;">
-            A complete REST API → MCP pattern with 4 tools demonstrating CRUD operations and real-world patterns.
+            Four tools over JSONPlaceholder: list, get, create and update.
         </p>
         <div class="tools-grid">
             <div class="tool-card">
@@ -607,7 +608,7 @@
                     <span class="method-badge method-patch">PATCH</span>
                     <h4>api_update_post</h4>
                 </div>
-                <p>Partial updates with existence checks</p>
+                <p>Partial update, marked destructive</p>
             </div>
         </div>
     </section>
@@ -618,14 +619,14 @@
     <section class="quick-start" id="quick-start">
         <h2 class="section-title">Quick Start</h2>
         <p style="color: var(--text-secondary); max-width: 700px; margin: 0 auto 1.5rem;">
-            Get the server running in under 2 minutes. All tests pass.
+            Clone, install from the lock file, run the offline tests.
         </p>
         <div class="code-block">
-            <pre><span class="code-line"><span class="code-keyword">git clone</span> https://github.com/BryceEWatson/mcp-api-bridge.git</span><span class="code-line"><span class="code-keyword">cd</span> mcp-api-bridge</span><span class="code-line"><span class="code-keyword">uv pip install</span> -e <span class="code-string">".[dev]"</span></span><span class="code-line"><span class="code-keyword">pytest</span> tests/ -v  <span class="code-comment"># 74 tests pass</span></span></pre>
+            <pre><span class="code-line"><span class="code-keyword">git clone</span> https://github.com/BryceEWatson/mcp-api-bridge.git</span><span class="code-line"><span class="code-keyword">cd</span> mcp-api-bridge</span><span class="code-line"><span class="code-keyword">uv sync</span> --extra dev</span><span class="code-line"><span class="code-keyword">uv run pytest</span> -m <span class="code-string">"not live"</span>  <span class="code-comment"># HTTP mocked, no network</span></span><span class="code-line"><span class="code-keyword">uv run</span> api-bridge  <span class="code-comment"># MCP server over stdio</span></span></pre>
         </div>
         <div style="background-color: rgba(16, 185, 129, 0.1); border-left: 4px solid var(--success); padding: 1.25rem; border-radius: 0.5rem; margin-top: 1.5rem;">
             <p style="margin: 0; color: var(--text-secondary);">
-                <strong style="color: var(--success);">✓ Ready to use:</strong> All dependencies installed. The server starts immediately with <code style="background-color: rgba(0,0,0,0.3); padding: 0.25rem 0.5rem; border-radius: 0.25rem;">python -m api_bridge_mcp.server</code>
+                <strong style="color: var(--success);">Claude Desktop:</strong> add the server to <code style="background-color: rgba(0,0,0,0.3); padding: 0.25rem 0.5rem; border-radius: 0.25rem;">claude_desktop_config.json</code> as shown in the <a href="https://github.com/BryceEWatson/mcp-api-bridge#quick-start">README</a>. <a href="https://github.com/BryceEWatson/mcp-api-bridge/actions/workflows/ci.yml">CI</a> runs lint and tests on every push and pull request.
             </p>
         </div>
     </section>
@@ -638,24 +639,19 @@
         <div class="adapt-grid">
             <div class="adapt-content">
                 <p>
-                    The entire value of this project is the <strong>repeatable pattern</strong>. You're not locked into JSONPlaceholder. Swap one file and everything else is reusable MCP scaffolding.
+                    The point of this project is the <strong>pattern</strong>. JSONPlaceholder is a stand-in: swap the API client and the tool functions, and the FastMCP wiring, validation and error handling carry over.
                 </p>
-
-                <h3>The Key Insight</h3>
-                <div class="key-insight">
-                    "Swap the API client (one file) to point at your REST API. The MCP tools, validation, and response formatting are all reusable."
-                </div>
 
                 <h3>What You Change</h3>
                 <ol style="color: var(--text-secondary); padding-left: 1.5rem;">
                     <li>Update <code style="background-color: rgba(0,0,0,0.3); padding: 0.2rem 0.4rem; border-radius: 0.2rem;">api_client.py</code>: base URL, auth headers</li>
-                    <li>Replace Pydantic models: your domain (orders, users, etc.)</li>
-                    <li>Register new tools: same <code style="background-color: rgba(0,0,0,0.3); padding: 0.2rem 0.4rem; border-radius: 0.2rem;">@mcp.tool</code> pattern</li>
+                    <li>Write your tools: same <code style="background-color: rgba(0,0,0,0.3); padding: 0.2rem 0.4rem; border-radius: 0.2rem;">@mcp.tool</code> pattern, with <code style="background-color: rgba(0,0,0,0.3); padding: 0.2rem 0.4rem; border-radius: 0.2rem;">Annotated[type, Field(...)]</code> parameters for your domain</li>
+                    <li>Set the annotations to match what each tool really does</li>
                     <li>Update Claude Desktop config</li>
                 </ol>
 
                 <p style="margin-top: 1.5rem; color: var(--text-secondary); font-size: 0.95rem;">
-                    See the README for full step-by-step examples with actual code snippets.
+                    The <a href="https://github.com/BryceEWatson/mcp-api-bridge#adapting-it-for-your-api">README</a> has the full steps with code.
                 </p>
             </div>
 
@@ -663,19 +659,19 @@
                 <div class="code-diff">
                     <span class="code-comment"># Before (JSONPlaceholder)</span><br>
                     <span class="remove">- base_url = "https://jsonplaceholder.typicode.com"</span><br>
-                    <span class="remove">- class Post(BaseModel): ...</span><br><br>
+                    <span class="remove">- async def api_list_posts(user_id: Annotated[...], ...)</span><br><br>
                     <span class="code-comment"># After (Your API)</span><br>
                     <span class="add">+ base_url = "https://api.your-service.com/v1"</span><br>
-                    <span class="add">+ class Order(BaseModel): ...</span><br>
+                    <span class="add">+ async def orders_search(status: Annotated[...], ...)</span><br>
                     <span class="add">+ headers = {"Authorization": "Bearer YOUR_KEY"}</span>
                 </div>
 
                 <div style="background-color: var(--bg-secondary); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.5rem; margin-top: 1.5rem; text-align: center;">
                     <p style="color: var(--text-secondary); margin-bottom: 1rem;">
-                        <strong>74 tests</strong> ensure correctness through the refactor.
+                        <strong>Security notes</strong>
                     </p>
                     <p style="font-size: 0.9rem; color: var(--text-secondary);">
-                        Input validation, pagination, error handling, and dual-format responses all stay the same.
+                        The base URL is fixed in code, so tool input can't redirect requests. Input is checked against the schema before any HTTP call, and API failures come back as MCP errors. Prompt injection through tool output and response size limits are out of scope. The <a href="https://github.com/BryceEWatson/mcp-api-bridge#security-notes">README</a> lists both sides.
                     </p>
                 </div>
             </div>
@@ -689,16 +685,11 @@
         <div class="footer-content">
             <p class="footer-title">Built by Bryce Watson</p>
             <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
-                Senior engineer (10+ years, ex-eBay). Specializing in AI engineering, MCP servers, and production AI systems. Contributor to Anthropic's Python SDK.
+                I build AI tooling and MCP servers. MIT licensed.
             </p>
             <div class="footer-links">
                 <a href="https://github.com/BryceEWatson">GitHub</a>
-                <a href="https://www.upwork.com/freelancers/brycewatson">Upwork</a>
                 <a href="https://brycewatson.com">Website</a>
-            </div>
-            <div class="footer-cta">
-                <p style="color: var(--text-secondary); margin-bottom: 0.75rem;">Need an MCP server built for your API?</p>
-                <a href="https://www.upwork.com/freelancers/brycewatson">Get in touch →</a>
             </div>
         </div>
     </footer>

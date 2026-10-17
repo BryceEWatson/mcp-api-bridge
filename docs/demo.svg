@@ -29,7 +29,7 @@
   <circle cx="72" cy="24" r="6" fill="#27c93f" filter="url(#shadowSmall)"/>
 
   <!-- Title bar text -->
-  <text x="400" y="32" text-anchor="middle" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; font-weight: 600; fill: #e2e8f0;">Claude Desktop — MCP API Bridge</text>
+  <text x="400" y="32" text-anchor="middle" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; font-weight: 600; fill: #e2e8f0;">Claude Desktop: MCP API Bridge (illustration)</text>
 
   <!-- Divider under title bar -->
   <line x1="0" y1="48" x2="800" y2="48" stroke="#1e293b" stroke-width="1"/>
@@ -43,7 +43,7 @@
     <text x="96" y="86" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; font-weight: 600; fill: #3b82f6;">▶ You</text>
 
     <!-- Message text -->
-    <text x="96" y="106" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; fill: #e2e8f0;">List the 3 most recent posts by user 1</text>
+    <text x="96" y="106" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; fill: #e2e8f0;">List the first 3 posts by user 1</text>
   </g>
 
   <!-- System indicator: Tool call -->
