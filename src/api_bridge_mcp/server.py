@@ -2,9 +2,10 @@
 
 This module demonstrates the "REST API → MCP server" pattern:
 - Centralized API client (api_client.py) handles all HTTP concerns
-- Pydantic models validate inputs
+- Annotated[type, Field(...)] parameters give each tool a JSON schema that
+  FastMCP enforces before the tool runs
 - Tools expose clean, typed interfaces to Claude and other AI assistants
-- Error handling maps API errors to actionable messages
+- API errors are raised as ToolError, so clients see isError=True
 """
 
 import json
@@ -32,11 +33,15 @@ Body = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max
 def _raise_tool_error(action: str, e: Exception) -> NoReturn:
     """Raise a ToolError so the MCP result is marked isError=True.
 
-    HTTP and network errors get an actionable message. Anything else is logged
-    to stderr and reported generically, so internal details don't reach the
-    model.
+    A ToolError raised on purpose inside a tool passes through unchanged. HTTP
+    and network errors get an actionable message, with the details logged to
+    stderr. Anything else is logged and reported generically, so internal
+    details don't reach the model.
     """
+    if isinstance(e, ToolError):
+        raise e
     if isinstance(e, httpx.HTTPError):
+        logger.warning("HTTP error %s: %r", action, e)
         raise ToolError(f"Error {action}: {handle_api_error(e)}") from e
     logger.exception("Unexpected error %s", action)
     raise ToolError(f"Error {action}: unexpected server error. See the server log.") from e
@@ -222,9 +227,10 @@ async def api_get_post(
             if include_comments:
                 try:
                     comments = await client.get(f"/posts/{post_id}/comments")
-                except httpx.HTTPError as e:
-                    # Still return the post, but say the comments are missing
-                    comments_error = handle_api_error(e)
+                except (httpx.HTTPError, ValueError) as e:
+                    # Still return the post, but say the comments are missing.
+                    # ValueError covers a response body that isn't JSON.
+                    comments_error = handle_api_error(e) if isinstance(e, httpx.HTTPError) else "Response was not valid JSON."
 
             if response_format == ResponseFormat.JSON:
                 return _format_get_post_json(post, comments, comments_error)

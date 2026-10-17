@@ -359,9 +359,8 @@ class TestErrorHandling:
                 "api_get_post",
                 {"post_id": 99999},
             )
-            # Should return an error message, not crash
-            text = result.content[0].text
-            assert "error" in text.lower() or "404" in text or "not found" in text.lower()
+            assert result.isError, "a 404 must come back as an MCP error"
+            assert "not found" in result.content[0].text.lower()
 
 
 # ============================================================================

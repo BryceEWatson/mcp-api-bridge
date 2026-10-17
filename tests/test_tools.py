@@ -13,6 +13,7 @@ from mcp.shared.memory import create_connected_server_and_client_session
 
 from api_bridge_mcp.server import (
     ResponseFormat,
+    _raise_tool_error,
     api_create_post,
     api_get_post,
     api_list_posts,
@@ -306,6 +307,17 @@ class TestToolErrorHandling:
         assert "secret" not in str(exc.value)
 
     @pytest.mark.asyncio
+    async def test_comments_non_json_still_returns_post_with_note(self, httpx_mock):
+        httpx_mock.add_response(method="GET", url=f"{BASE}/posts/1", json=SAMPLE_POST)
+        httpx_mock.add_response(method="GET", url=f"{BASE}/posts/1/comments", text="<html>oops</html>")
+
+        result = await api_get_post(post_id=1, include_comments=True, response_format=ResponseFormat.JSON)
+
+        data = json.loads(result)
+        assert data["post"]["id"] == 1
+        assert data["comments_error"] == "Response was not valid JSON."
+
+    @pytest.mark.asyncio
     async def test_comments_failure_still_returns_post_with_note(self, httpx_mock):
         httpx_mock.add_response(method="GET", url=f"{BASE}/posts/1", json=SAMPLE_POST)
         httpx_mock.add_response(method="GET", url=f"{BASE}/posts/1/comments", status_code=503)
@@ -342,3 +354,11 @@ class TestUserIDFiltering:
         assert data["pagination"]["count"] == 2
         for post in data["posts"]:
             assert post["userId"] == 1
+
+
+class TestRaiseToolError:
+    """The shared error helper used by every tool."""
+
+    def test_deliberate_tool_error_passes_through(self):
+        with pytest.raises(ToolError, match="^Post is locked$"):
+            _raise_tool_error("updating post", ToolError("Post is locked"))

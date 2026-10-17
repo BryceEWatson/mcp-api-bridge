@@ -61,6 +61,8 @@ The server speaks MCP over stdin and stdout, so running it by hand just waits fo
 }
 ```
 
+If Claude Desktop can't find `uv`, use its full path (`which uv` on macOS and Linux, `where uv` on Windows), since desktop apps don't always see your shell's PATH. On Windows, write the `--directory` path with forward slashes.
+
 If you'd rather use pip, `python -m venv .venv`, activate it, then `pip install -e ".[dev]"`. `uv.lock` pins the exact versions CI tests against.
 
 ## The tools
@@ -85,7 +87,7 @@ I wrote these down because they're the questions I'd ask of any MCP server befor
 - **No server-side request forgery from tool input.** The base URL is set in code by whoever runs the server. Tools only build paths from integer IDs that the schema has already checked (`post_id >= 1`), so a model can't make the server call another host or path. httpx doesn't follow redirects by default and the client keeps it that way.
 - **Input is validated at the protocol boundary.** Every parameter has a type and bounds in the JSON schema, and FastMCP enforces it before the tool runs. Titles and bodies are stripped, so whitespace-only strings are rejected. Tests check that rejected calls send no HTTP request at all.
 - **Errors are real MCP errors.** API failures raise `ToolError`, so the client sees `isError: true` instead of an error string dressed up as a success. HTTP and network errors get a short actionable message. Anything unexpected is logged to stderr and reported as a generic error, so stack traces and response bodies don't end up in the model's context.
-- **Every request has a timeout** (30 seconds by default).
+- **Timeouts.** Connect, read, write and pool each time out after 30 seconds by default. There's no overall deadline per request, so a server that keeps trickling bytes can hold a call open.
 - **No credentials.** JSONPlaceholder needs none, so there are no secrets in the repo. If you add a key, read it from the environment as in Step 1 below.
 
 **What it doesn't handle (out of scope for this example):**
@@ -135,6 +137,8 @@ async def orders_search(
     except Exception as e:
         _raise_tool_error("searching orders", e)
 ```
+
+`_raise_tool_error` passes a `ToolError` you raise yourself through unchanged, turns HTTP errors into short messages, and reports anything else generically.
 
 Set the annotations to match what the tool really does. A tool that overwrites or deletes data should say `destructiveHint: True`.
 
@@ -187,7 +191,7 @@ uv run pytest -m live
 uv run ruff check src tests
 ```
 
-[CI](.github/workflows/ci.yml) runs lint and the offline tests on Python 3.10 through 3.13, the offline tests again with the oldest dependency versions `pyproject.toml` allows, and the live tests once against JSONPlaceholder. The live job depends on that public service being up.
+[CI](.github/workflows/ci.yml) runs lint and the offline tests on Python 3.10 through 3.13 on Linux, the offline tests on Windows and macOS, the offline tests again with the oldest dependency versions `pyproject.toml` allows, and the live tests once against JSONPlaceholder. The live job depends on that public service being up.
 
 ## Built with
 

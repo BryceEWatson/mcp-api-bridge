@@ -10,7 +10,8 @@ Security notes:
   a model can't point requests at an arbitrary URL.
 - httpx does not follow redirects by default, and this client keeps it that
   way, so a redirect can't send a request to another host.
-- Every request has a timeout (30 seconds by default).
+- Connect, read, write and pool each have a 30 second timeout by default.
+  There is no overall deadline per request.
 """
 
 from typing import Optional
@@ -50,9 +51,11 @@ def handle_api_error(e: Exception) -> str:
     elif isinstance(e, httpx.ConnectError):
         return "Connection failed. Check your network or the API endpoint."
     elif isinstance(e, httpx.RequestError):
-        return f"Request error: {str(e)}"
+        # The exception text can carry proxy, TLS or decoder internals, so the
+        # model only gets the error type.
+        return f"Network error talking to the API ({type(e).__name__})."
     else:
-        return f"Unexpected error: {str(e)}"
+        return "Unexpected error."
 
 
 class APIClient:
