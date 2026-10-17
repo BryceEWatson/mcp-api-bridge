@@ -8,20 +8,38 @@ This module demonstrates the "REST API → MCP server" pattern:
 """
 
 import json
+import logging
+from enum import Enum
+from typing import Annotated, NoReturn, Optional
 
 import httpx
-from enum import Enum
-from typing import Annotated, Optional, Any
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
-
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from pydantic import Field, StringConstraints
 
 from .api_client import APIClient, handle_api_error
 
+logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server
 mcp = FastMCP("api_bridge_mcp")
+
+# Strings are stripped before the length check, so "   " is rejected as empty.
+Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+Body = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=5000)]
+
+
+def _raise_tool_error(action: str, e: Exception) -> NoReturn:
+    """Raise a ToolError so the MCP result is marked isError=True.
+
+    HTTP and network errors get an actionable message. Anything else is logged
+    to stderr and reported generically, so internal details don't reach the
+    model.
+    """
+    if isinstance(e, httpx.HTTPError):
+        raise ToolError(f"Error {action}: {handle_api_error(e)}") from e
+    logger.exception("Unexpected error %s", action)
+    raise ToolError(f"Error {action}: unexpected server error. See the server log.") from e
 
 
 # ============================================================================
@@ -37,43 +55,6 @@ class ResponseFormat(str, Enum):
 # ============================================================================
 # Tool 1: api_list_posts
 # ============================================================================
-
-class ListPostsInput(BaseModel):
-    """Input model for api_list_posts tool."""
-
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        extra="forbid"
-    )
-
-    user_id: Optional[int] = Field(
-        None,
-        description="Filter posts by user ID (author). If omitted, returns posts from all users."
-    )
-    limit: int = Field(
-        20,
-        ge=1,
-        le=100,
-        description="Number of posts to return. Default 20, max 100."
-    )
-    offset: int = Field(
-        0,
-        ge=0,
-        description="Number of posts to skip. Default 0. Used for pagination."
-    )
-    response_format: ResponseFormat = Field(
-        ResponseFormat.MARKDOWN,
-        description="Output format: 'markdown' for human-readable summaries, 'json' for full objects."
-    )
-
-    @field_validator('user_id')
-    @classmethod
-    def validate_user_id(cls, v):
-        if v is not None and v < 1:
-            raise ValueError("user_id must be >= 1")
-        return v
-
 
 @mcp.tool(
     name="api_list_posts",
@@ -113,9 +94,8 @@ async def api_list_posts(
         >>> await api_list_posts(limit=20, offset=20)
 
     Error Handling:
-        - Invalid user_id: Returns validation error
-        - Limit out of range: Returns validation error
-        - Network error: Returns actionable error message
+        - Invalid user_id or limit out of range: rejected by schema validation
+        - HTTP or network error: raises ToolError (isError=True) with an actionable message
     """
     try:
         async with APIClient() as client:
@@ -149,10 +129,8 @@ async def api_list_posts(
                     "next_offset": next_offset
                 })
 
-    except httpx.HTTPError as e:
-        return f"Error fetching posts: {handle_api_error(e)}"
     except Exception as e:
-        return f"Error: {handle_api_error(e)}"
+        _raise_tool_error("fetching posts", e)
 
 
 def _format_list_posts_markdown(posts: list, pagination: dict) -> str:
@@ -193,30 +171,6 @@ def _format_list_posts_json(posts: list, pagination: dict) -> str:
 # Tool 2: api_get_post
 # ============================================================================
 
-class GetPostInput(BaseModel):
-    """Input model for api_get_post tool."""
-
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        extra="forbid"
-    )
-
-    post_id: int = Field(
-        ...,
-        ge=1,
-        description="ID of the post to fetch. Must be >= 1."
-    )
-    include_comments: bool = Field(
-        False,
-        description="If true, also fetch comments on this post."
-    )
-    response_format: ResponseFormat = Field(
-        ResponseFormat.MARKDOWN,
-        description="Output format: 'markdown' for formatted display, 'json' for raw objects."
-    )
-
-
 @mcp.tool(
     name="api_get_post",
     description="Fetch a single post by ID with optional comments.",
@@ -252,9 +206,10 @@ async def api_get_post(
         >>> await api_get_post(post_id=5, include_comments=True, response_format=ResponseFormat.JSON)
 
     Error Handling:
-        - Post not found (404): Returns "Resource not found" message
-        - Invalid post_id: Returns validation error
-        - Network error: Returns actionable error message
+        - Post not found (404): raises ToolError (isError=True)
+        - Invalid post_id: rejected by schema validation
+        - Comments request fails: post is still returned, with a note that comments are missing
+        - HTTP or network error: raises ToolError with an actionable message
     """
     try:
         async with APIClient() as client:
@@ -263,27 +218,24 @@ async def api_get_post(
 
             # Optionally fetch comments
             comments = []
+            comments_error = None
             if include_comments:
                 try:
                     comments = await client.get(f"/posts/{post_id}/comments")
-                except httpx.HTTPStatusError:
-                    # If comments endpoint fails, continue without them
-                    comments = []
+                except httpx.HTTPError as e:
+                    # Still return the post, but say the comments are missing
+                    comments_error = handle_api_error(e)
 
             if response_format == ResponseFormat.JSON:
-                return _format_get_post_json(post, comments)
+                return _format_get_post_json(post, comments, comments_error)
             else:  # markdown
-                return _format_get_post_markdown(post, comments)
+                return _format_get_post_markdown(post, comments, comments_error)
 
-    except httpx.HTTPStatusError as e:
-        return f"Error fetching post: {handle_api_error(e)}"
-    except httpx.HTTPError as e:
-        return f"Error fetching post: {handle_api_error(e)}"
     except Exception as e:
-        return f"Error: {handle_api_error(e)}"
+        _raise_tool_error("fetching post", e)
 
 
-def _format_get_post_markdown(post: dict, comments: list) -> str:
+def _format_get_post_markdown(post: dict, comments: list, comments_error: Optional[str] = None) -> str:
     """Format post as markdown."""
     lines = []
     lines.append(f"# {post.get('title', 'Untitled')}")
@@ -302,57 +254,27 @@ def _format_get_post_markdown(post: dict, comments: list) -> str:
             lines.append(f"   {body}")
             lines.append("")
 
+    if comments_error:
+        lines.append(f"_Comments could not be loaded: {comments_error}_")
+
     return "\n".join(lines)
 
 
-def _format_get_post_json(post: dict, comments: list) -> str:
+def _format_get_post_json(post: dict, comments: list, comments_error: Optional[str] = None) -> str:
     """Format post as JSON."""
     data = {
         "post": post,
     }
     if comments:
         data["comments"] = comments
+    if comments_error:
+        data["comments_error"] = comments_error
     return json.dumps(data, indent=2)
 
 
 # ============================================================================
 # Tool 3: api_create_post
 # ============================================================================
-
-class CreatePostInput(BaseModel):
-    """Input model for api_create_post tool."""
-
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        extra="forbid"
-    )
-
-    title: str = Field(
-        ...,
-        min_length=1,
-        max_length=200,
-        description="Post title (1-200 characters)."
-    )
-    body: str = Field(
-        ...,
-        min_length=1,
-        max_length=5000,
-        description="Post body content (1-5000 characters)."
-    )
-    user_id: int = Field(
-        ...,
-        ge=1,
-        description="ID of the user creating the post. Must be >= 1."
-    )
-
-    @field_validator('title', 'body')
-    @classmethod
-    def validate_not_empty(cls, v):
-        if not v.strip():
-            raise ValueError("Cannot be empty or whitespace only")
-        return v
-
 
 @mcp.tool(
     name="api_create_post",
@@ -365,8 +287,8 @@ class CreatePostInput(BaseModel):
     }
 )
 async def api_create_post(
-    title: Annotated[str, Field(description="Post title (1-200 characters).", min_length=1, max_length=200)],
-    body: Annotated[str, Field(description="Post body content (1-5000 characters).", min_length=1, max_length=5000)],
+    title: Annotated[Title, Field(description="Post title (1-200 characters).")],
+    body: Annotated[Body, Field(description="Post body content (1-5000 characters).")],
     user_id: Annotated[int, Field(description="ID of the user creating the post. Must be >= 1.", ge=1)]
 ) -> str:
     """Create a new post on JSONPlaceholder.
@@ -397,10 +319,9 @@ async def api_create_post(
         ... )
 
     Error Handling:
-        - Title too long (>200 chars): Returns validation error
-        - Body too long (>5000 chars): Returns validation error
-        - user_id < 1: Returns validation error
-        - Network error: Returns actionable error message
+        - Empty, whitespace-only or too-long title/body: rejected by schema validation
+        - user_id < 1: rejected by schema validation
+        - HTTP or network error: raises ToolError (isError=True) with an actionable message
     """
     try:
         async with APIClient() as client:
@@ -417,77 +338,29 @@ async def api_create_post(
                 "post": result
             }, indent=2)
 
-    except httpx.HTTPError as e:
-        return f"Error creating post: {handle_api_error(e)}"
     except Exception as e:
-        return f"Error: {handle_api_error(e)}"
+        _raise_tool_error("creating post", e)
 
 
 # ============================================================================
 # Tool 4: api_update_post
 # ============================================================================
 
-class UpdatePostInput(BaseModel):
-    """Input model for api_update_post tool."""
-
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        extra="forbid"
-    )
-
-    post_id: int = Field(
-        ...,
-        ge=1,
-        description="ID of the post to update. Must be >= 1."
-    )
-    title: Optional[str] = Field(
-        None,
-        min_length=1,
-        max_length=200,
-        description="New title (1-200 characters). Omit to keep current."
-    )
-    body: Optional[str] = Field(
-        None,
-        min_length=1,
-        max_length=5000,
-        description="New body (1-5000 characters). Omit to keep current."
-    )
-    user_id: Optional[int] = Field(
-        None,
-        ge=1,
-        description="New user ID. Omit to keep current."
-    )
-
-    @field_validator('title', 'body')
-    @classmethod
-    def validate_not_empty_if_present(cls, v):
-        if v is not None and not v.strip():
-            raise ValueError("Cannot be empty or whitespace only")
-        return v
-
-    @model_validator(mode='after')
-    def check_at_least_one_field(self):
-        """Ensure at least one of title/body/user_id is provided."""
-        if self.title is None and self.body is None and self.user_id is None:
-            raise ValueError("At least one of title, body, or user_id must be provided")
-        return self
-
-
 @mcp.tool(
     name="api_update_post",
-    description="Update a post (partial update with PATCH).",
+    description="Update a post (partial update with PATCH). Overwrites the fields you pass.",
     annotations={
         "readOnlyHint": False,
-        "destructiveHint": False,
+        # Overwriting a field replaces existing data, so this is not additive.
+        "destructiveHint": True,
         "idempotentHint": True,
         "openWorldHint": True
     }
 )
 async def api_update_post(
     post_id: Annotated[int, Field(description="ID of the post to update. Must be >= 1.", ge=1)],
-    title: Annotated[Optional[str], Field(description="New title (1-200 characters). Omit to keep current.", min_length=1, max_length=200)] = None,
-    body: Annotated[Optional[str], Field(description="New body (1-5000 characters). Omit to keep current.", min_length=1, max_length=5000)] = None,
+    title: Annotated[Optional[Title], Field(description="New title (1-200 characters). Omit to keep current.")] = None,
+    body: Annotated[Optional[Body], Field(description="New body (1-5000 characters). Omit to keep current.")] = None,
     user_id: Annotated[Optional[int], Field(description="New user ID. Omit to keep current.", ge=1)] = None
 ) -> str:
     """Update a post with partial fields.
@@ -518,10 +391,10 @@ async def api_update_post(
         >>> await api_update_post(post_id=10, user_id=3)
 
     Error Handling:
-        - post_id < 1: Returns validation error
-        - No fields provided: Returns validation error
-        - Post not found (404): Returns "Resource not found" message
-        - Network error: Returns actionable error message
+        - post_id < 1 or blank title/body: rejected by schema validation
+        - No fields provided: raises ToolError
+        - Post not found (404): raises ToolError (isError=True)
+        - HTTP or network error: raises ToolError with an actionable message
     """
     # Validate that at least one field is provided
     if title is None and body is None and user_id is None:
@@ -546,12 +419,8 @@ async def api_update_post(
                 "post": result
             }, indent=2)
 
-    except httpx.HTTPStatusError as e:
-        return f"Error updating post: {handle_api_error(e)}"
-    except httpx.HTTPError as e:
-        return f"Error updating post: {handle_api_error(e)}"
     except Exception as e:
-        return f"Error: {handle_api_error(e)}"
+        _raise_tool_error("updating post", e)
 
 
 # ============================================================================

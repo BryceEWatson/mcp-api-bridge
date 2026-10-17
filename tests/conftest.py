@@ -1,11 +1,10 @@
 """Shared test fixtures and mock data for api_bridge_mcp tests."""
 
+
 import pytest
 import pytest_asyncio
-from unittest.mock import AsyncMock, MagicMock
-import httpx
-from api_bridge_mcp.api_client import APIClient
 
+from api_bridge_mcp.api_client import APIClient
 
 # ============================================================================
 # Sample Data Constants

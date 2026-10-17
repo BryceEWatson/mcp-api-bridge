@@ -1,12 +1,21 @@
 """Centralized HTTP client for JSONPlaceholder API.
 
 This module provides a clean API layer that can be swapped out for any
-other REST API. Buyers of this MCP server would replace this file with
-their own API implementation.
+other REST API. To adapt the server, replace this file with a client for
+your own API.
+
+Security notes:
+- The base URL is set in code by whoever runs the server. No tool input can
+  change the host, and tools only build paths from validated integer IDs, so
+  a model can't point requests at an arbitrary URL.
+- httpx does not follow redirects by default, and this client keeps it that
+  way, so a redirect can't send a request to another host.
+- Every request has a timeout (30 seconds by default).
 """
 
+from typing import Optional
+
 import httpx
-from typing import Any, Optional
 
 
 def handle_api_error(e: Exception) -> str:

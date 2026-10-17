@@ -1,9 +1,11 @@
 """Tests for the APIClient HTTP layer."""
 
-import pytest
 import httpx
+import pytest
+
 from api_bridge_mcp.api_client import APIClient, handle_api_error
-from .conftest import SAMPLE_POST, SAMPLE_POSTS
+
+from .conftest import SAMPLE_POSTS
 
 
 class TestAPIClientGet:

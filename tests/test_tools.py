@@ -1,138 +1,94 @@
-"""Tests for MCP tool functions."""
+"""Tests for MCP tool functions.
+
+Validation tests go through the real MCP protocol (in-memory transport), so
+they check the schema the server actually enforces, not a separate model.
+All HTTP calls are mocked with pytest-httpx; nothing here touches the network.
+"""
+
+import json
 
 import pytest
-import json
-from pydantic import ValidationError
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.shared.memory import create_connected_server_and_client_session
+
 from api_bridge_mcp.server import (
-    api_list_posts, api_get_post, api_create_post, api_update_post,
-    ListPostsInput, GetPostInput, CreatePostInput, UpdatePostInput,
-    ResponseFormat
+    ResponseFormat,
+    api_create_post,
+    api_get_post,
+    api_list_posts,
+    api_update_post,
 )
-from .conftest import SAMPLE_POST, SAMPLE_POSTS, SAMPLE_COMMENTS
+from api_bridge_mcp.server import mcp as server_instance
+
+from .conftest import SAMPLE_COMMENTS, SAMPLE_POST, SAMPLE_POSTS
+
+BASE = "https://jsonplaceholder.typicode.com"
+
+
+async def call(tool: str, args: dict):
+    async with create_connected_server_and_client_session(server_instance) as session:
+        return await session.call_tool(tool, args)
 
 
 # ============================================================================
-# Input Validation Tests
+# Input Validation Tests (rejected before any HTTP request is made)
 # ============================================================================
 
-class TestListPostsInputValidation:
-    """Test input validation for api_list_posts."""
-
-    def test_limit_zero_raises_validation_error(self):
-        """Test that limit=0 raises validation error."""
-        with pytest.raises(ValidationError):
-            ListPostsInput(limit=0)
-
-    def test_limit_over_100_raises_validation_error(self):
-        """Test that limit>100 raises validation error."""
-        with pytest.raises(ValidationError):
-            ListPostsInput(limit=101)
-
-    def test_valid_limit_range(self):
-        """Test that limit within valid range is accepted."""
-        model = ListPostsInput(limit=50)
-        assert model.limit == 50
-
-    def test_negative_offset_raises_validation_error(self):
-        """Test that negative offset raises validation error."""
-        with pytest.raises(ValidationError):
-            ListPostsInput(offset=-1)
-
-    def test_valid_offset(self):
-        """Test that valid offset is accepted."""
-        model = ListPostsInput(offset=10)
-        assert model.offset == 10
+INVALID_INPUTS = [
+    ("api_list_posts", {"limit": 0}),
+    ("api_list_posts", {"limit": 101}),
+    ("api_list_posts", {"offset": -1}),
+    ("api_list_posts", {"user_id": 0}),
+    ("api_get_post", {"post_id": 0}),
+    ("api_get_post", {"post_id": -1}),
+    ("api_create_post", {"title": "", "body": "content", "user_id": 1}),
+    ("api_create_post", {"title": "   ", "body": "content", "user_id": 1}),
+    ("api_create_post", {"title": "a" * 201, "body": "content", "user_id": 1}),
+    ("api_create_post", {"title": "Title", "body": "", "user_id": 1}),
+    ("api_create_post", {"title": "Title", "body": "\n\t ", "user_id": 1}),
+    ("api_create_post", {"title": "Title", "body": "a" * 5001, "user_id": 1}),
+    ("api_create_post", {"title": "Title", "body": "content", "user_id": 0}),
+    ("api_create_post", {"title": "Title"}),
+    ("api_update_post", {"post_id": 1}),
+    ("api_update_post", {"post_id": 0, "title": "New Title"}),
+    ("api_update_post", {"post_id": 1, "title": "  "}),
+]
 
 
-class TestGetPostInputValidation:
-    """Test input validation for api_get_post."""
+class TestInputValidation:
+    """Bad input is rejected with isError=True and no HTTP request.
 
-    def test_post_id_zero_raises_validation_error(self):
-        """Test that post_id=0 raises validation error."""
-        with pytest.raises(ValidationError):
-            GetPostInput(post_id=0)
+    Each case also checks that no HTTP request was sent, so validation has to
+    happen before the API is called.
+    """
 
-    def test_post_id_negative_raises_validation_error(self):
-        """Test that negative post_id raises validation error."""
-        with pytest.raises(ValidationError):
-            GetPostInput(post_id=-1)
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool,args", INVALID_INPUTS)
+    async def test_invalid_input_is_rejected(self, tool, args, httpx_mock):
+        result = await call(tool, args)
+        assert result.isError, f"{tool}({args}) should be rejected"
+        assert httpx_mock.get_requests() == [], "validation must happen before any HTTP request"
 
-    def test_valid_post_id(self):
-        """Test that valid post_id is accepted."""
-        model = GetPostInput(post_id=1)
-        assert model.post_id == 1
+    @pytest.mark.asyncio
+    async def test_title_and_body_are_stripped_before_sending(self, httpx_mock):
+        httpx_mock.add_response(method="POST", url=f"{BASE}/posts", json={"id": 101})
 
+        result = await call("api_create_post", {"title": "  Hi  ", "body": " text ", "user_id": 1})
 
-class TestCreatePostInputValidation:
-    """Test input validation for api_create_post."""
+        assert not result.isError
+        sent = json.loads(httpx_mock.get_request().content)
+        assert sent == {"title": "Hi", "body": "text", "userId": 1}
 
-    def test_empty_title_raises_validation_error(self):
-        """Test that empty title raises validation error."""
-        with pytest.raises(ValidationError):
-            CreatePostInput(title="", body="content", user_id=1)
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fields", [{"title": "New"}, {"body": "New body"}, {"user_id": 5}])
+    async def test_update_with_one_field_sends_only_that_field(self, fields, httpx_mock):
+        httpx_mock.add_response(method="PATCH", url=f"{BASE}/posts/1", json={"id": 1})
 
-    def test_title_over_200_chars_raises_validation_error(self):
-        """Test that title over 200 chars raises validation error."""
-        long_title = "a" * 201
-        with pytest.raises(ValidationError):
-            CreatePostInput(title=long_title, body="content", user_id=1)
+        result = await call("api_update_post", {"post_id": 1, **fields})
 
-    def test_empty_body_raises_validation_error(self):
-        """Test that empty body raises validation error."""
-        with pytest.raises(ValidationError):
-            CreatePostInput(title="Title", body="", user_id=1)
-
-    def test_body_over_5000_chars_raises_validation_error(self):
-        """Test that body over 5000 chars raises validation error."""
-        long_body = "a" * 5001
-        with pytest.raises(ValidationError):
-            CreatePostInput(title="Title", body=long_body, user_id=1)
-
-    def test_user_id_zero_raises_validation_error(self):
-        """Test that user_id=0 raises validation error."""
-        with pytest.raises(ValidationError):
-            CreatePostInput(title="Title", body="content", user_id=0)
-
-    def test_valid_create_post_input(self):
-        """Test that valid input is accepted."""
-        model = CreatePostInput(title="Test", body="content", user_id=1)
-        assert model.title == "Test"
-        assert model.body == "content"
-        assert model.user_id == 1
-
-
-class TestUpdatePostInputValidation:
-    """Test input validation for api_update_post."""
-
-    def test_no_fields_provided_raises_validation_error(self):
-        """Test that no fields provided raises validation error."""
-        with pytest.raises(ValidationError):
-            UpdatePostInput(post_id=1)
-
-    def test_post_id_zero_raises_validation_error(self):
-        """Test that post_id=0 raises validation error."""
-        with pytest.raises(ValidationError):
-            UpdatePostInput(post_id=0, title="New Title")
-
-    def test_valid_update_with_title_only(self):
-        """Test that updating only title is valid."""
-        model = UpdatePostInput(post_id=1, title="New Title")
-        assert model.post_id == 1
-        assert model.title == "New Title"
-        assert model.body is None
-
-    def test_valid_update_with_body_only(self):
-        """Test that updating only body is valid."""
-        model = UpdatePostInput(post_id=1, body="New Body")
-        assert model.post_id == 1
-        assert model.body == "New Body"
-        assert model.title is None
-
-    def test_valid_update_with_user_id_only(self):
-        """Test that updating only user_id is valid."""
-        model = UpdatePostInput(post_id=1, user_id=5)
-        assert model.post_id == 1
-        assert model.user_id == 5
+        assert not result.isError
+        sent = json.loads(httpx_mock.get_request().content)
+        assert len(sent) == 1
 
 
 # ============================================================================
@@ -306,46 +262,60 @@ class TestListPostsPagination:
 # ============================================================================
 
 class TestToolErrorHandling:
-    """Test error handling in tool functions."""
+    """API failures raise ToolError, which MCP reports as isError=True."""
 
     @pytest.mark.asyncio
-    async def test_get_post_with_nonexistent_id_returns_error_message(self, httpx_mock):
-        """Test that getting non-existent post returns error message."""
-        httpx_mock.add_response(
-            method="GET",
-            url="https://jsonplaceholder.typicode.com/posts/99999",
-            status_code=404
-        )
+    async def test_get_post_404_raises_tool_error(self, httpx_mock):
+        httpx_mock.add_response(method="GET", url=f"{BASE}/posts/99999", status_code=404)
 
-        result = await api_get_post(post_id=99999)
-
-        assert "Error fetching post" in result or "not found" in result.lower()
+        with pytest.raises(ToolError, match="Error fetching post: Resource not found"):
+            await api_get_post(post_id=99999)
 
     @pytest.mark.asyncio
-    async def test_create_post_with_api_failure_returns_error_message(self, httpx_mock):
-        """Test that API failure in create returns error message."""
-        httpx_mock.add_response(
-            method="POST",
-            url="https://jsonplaceholder.typicode.com/posts",
-            status_code=500
-        )
+    async def test_create_post_500_raises_tool_error(self, httpx_mock):
+        httpx_mock.add_response(method="POST", url=f"{BASE}/posts", status_code=500)
 
-        result = await api_create_post(title="Test", body="Body", user_id=1)
-
-        assert "Error creating post" in result or "error" in result.lower()
+        with pytest.raises(ToolError, match="Error creating post: API server error"):
+            await api_create_post(title="Test", body="Body", user_id=1)
 
     @pytest.mark.asyncio
-    async def test_update_post_with_nonexistent_id_returns_error(self, httpx_mock):
-        """Test that updating non-existent post returns error."""
-        httpx_mock.add_response(
-            method="PATCH",
-            url="https://jsonplaceholder.typicode.com/posts/99999",
-            status_code=404
-        )
+    async def test_update_post_404_raises_tool_error(self, httpx_mock):
+        httpx_mock.add_response(method="PATCH", url=f"{BASE}/posts/99999", status_code=404)
 
-        result = await api_update_post(post_id=99999, title="New Title")
+        with pytest.raises(ToolError, match="Error updating post: Resource not found"):
+            await api_update_post(post_id=99999, title="New Title")
 
-        assert "Error updating post" in result or "error" in result.lower()
+    @pytest.mark.asyncio
+    async def test_api_error_is_reported_as_mcp_error(self, httpx_mock):
+        httpx_mock.add_response(method="GET", url=f"{BASE}/posts/99999", status_code=404)
+
+        result = await call("api_get_post", {"post_id": 99999})
+
+        assert result.isError
+        assert "not found" in result.content[0].text.lower()
+
+    @pytest.mark.asyncio
+    async def test_unexpected_error_does_not_leak_details(self, httpx_mock):
+        # A non-JSON body makes response.json() raise something that isn't an HTTP error
+        httpx_mock.add_response(method="GET", url=f"{BASE}/posts", text="<html>secret internals</html>")
+
+        with pytest.raises(ToolError) as exc:
+            await api_list_posts()
+
+        assert "unexpected server error" in str(exc.value)
+        assert "secret" not in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_comments_failure_still_returns_post_with_note(self, httpx_mock):
+        httpx_mock.add_response(method="GET", url=f"{BASE}/posts/1", json=SAMPLE_POST)
+        httpx_mock.add_response(method="GET", url=f"{BASE}/posts/1/comments", status_code=503)
+
+        result = await api_get_post(post_id=1, include_comments=True, response_format=ResponseFormat.JSON)
+
+        data = json.loads(result)
+        assert data["post"]["id"] == 1
+        assert "comments" not in data
+        assert "API server error (503)" in data["comments_error"]
 
 
 # ============================================================================
